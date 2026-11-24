@@ -33,14 +33,24 @@ from config import (
 )
 
 SELECTABLE_ENV_IDS: tuple[str, ...] = ("classic", "north_south", "south_north")
+RTL_ENV_IDS: tuple[str, ...] = ("classic_rtl", "north_south_rtl", "south_north_rtl")
 
 ENV_ALIASES: dict[str, str] = {
     "1": "classic",
     "2": "north_south",
     "3": "south_north",
+    "4": "classic_rtl",
+    "5": "north_south_rtl",
+    "6": "south_north_rtl",
+    "1r": "classic_rtl",
+    "2r": "north_south_rtl",
+    "3r": "south_north_rtl",
     "classic": "classic",
     "north_south": "north_south",
     "south_north": "south_north",
+    "classic_rtl": "classic_rtl",
+    "north_south_rtl": "north_south_rtl",
+    "south_north_rtl": "south_north_rtl",
     "random": "random",
     "multi": "multi",
 }
@@ -104,6 +114,22 @@ ENV_PRESETS: dict[str, dict] = {
         ],
     },
 }
+
+for _idx, _base_id in enumerate(SELECTABLE_ENV_IDS):
+    _base = ENV_PRESETS[_base_id]
+    _rx1, _rx2 = _base["river_x"]
+    _gx, _gy, _gw, _gh = _base["goal_rect"]
+    ENV_PRESETS[RTL_ENV_IDS[_idx]] = {
+        "name": f"{_base['name']} (R->L)",
+        "short_label": f"{_idx + 4}: {_base['short_label'].split(': ', 1)[-1]} (R->L)",
+        "description": f"Right-to-left: {_base['description']}",
+        "direction": -1,
+        "river_x": (SCREEN_WIDTH - _rx2, SCREEN_WIDTH - _rx1),
+        "bridge_y": _base["bridge_y"],
+        "goal_rect": (SCREEN_WIDTH - (_gx + _gw), _gy, _gw, _gh),
+        "gate_y": _base["gate_y"],
+        "rocks": [(SCREEN_WIDTH - _rx, _ry, _rr) for _rx, _ry, _rr in _base["rocks"]],
+    }
 
 
 def resolve_env_id(env_arg: str | None) -> str:
@@ -223,6 +249,7 @@ class PastureMap:
         name: str | None = None,
         description: str | None = None,
         env_id: str | None = None,
+        direction: int | None = None,
     ):
         cfg = ENV_PRESETS.get(preset, ENV_PRESETS["classic"])
 
@@ -231,6 +258,8 @@ class PastureMap:
         grect = goal_rect if goal_rect is not None else cfg["goal_rect"]
         gy1, gy2 = gate_y if gate_y is not None else cfg["gate_y"]
         rock_specs = rocks if rocks is not None else cfg["rocks"]
+        raw_dir = direction if direction is not None else cfg.get("direction", 1)
+        self.direction = -1 if raw_dir < 0 else 1
 
         self.env_id = env_id if env_id is not None else (preset if preset in ENV_PRESETS else "classic")
         self.name = name if name is not None else cfg["name"]
@@ -248,18 +277,19 @@ class PastureMap:
 
         bridge_mid_y = (self.bridge_y1 + self.bridge_y2) * 0.5
         gate_mid_y = (self.gate_y1 + self.gate_y2) * 0.5
+        gate_x = float(self.goal_rect.left if self.direction == 1 else self.goal_rect.right)
 
         self.bridge_center = pygame.Vector2((self.river_x1 + self.river_x2) * 0.5, bridge_mid_y)
-        self.bridge_in = pygame.Vector2(self.river_x1, bridge_mid_y)
-        self.bridge_out = pygame.Vector2(self.river_x2, bridge_mid_y)
-        self.gate_center = pygame.Vector2(self.goal_rect.left, gate_mid_y)
-        self.pen_approach = pygame.Vector2(self.goal_rect.left - 115, gate_mid_y)
-        self.pen_target = pygame.Vector2(self.goal_rect.left + 85, self.goal_rect.centery)
+        self.bridge_in = pygame.Vector2(self.river_x1 if self.direction == 1 else self.river_x2, bridge_mid_y)
+        self.bridge_out = pygame.Vector2(self.river_x2 if self.direction == 1 else self.river_x1, bridge_mid_y)
+        self.gate_center = pygame.Vector2(gate_x, gate_mid_y)
+        self.pen_approach = pygame.Vector2(gate_x - 115.0 * self.direction, gate_mid_y)
+        self.pen_target = pygame.Vector2(gate_x + 85.0 * self.direction, self.goal_rect.centery)
         self.pen_corner_nw = pygame.Vector2(
-            self.goal_rect.left - 55, max(40.0, float(self.goal_rect.top - 30))
+            gate_x - 55.0 * self.direction, max(40.0, float(self.goal_rect.top - 30))
         )
         self.pen_corner_sw = pygame.Vector2(
-            self.goal_rect.left - 55, min(float(SCREEN_HEIGHT - 40), float(self.goal_rect.bottom + 30))
+            gate_x - 55.0 * self.direction, min(float(SCREEN_HEIGHT - 40), float(self.goal_rect.bottom + 30))
         )
         self.goal_center = pygame.Vector2(self.goal_rect.centerx, self.goal_rect.centery)
 
@@ -273,11 +303,22 @@ class PastureMap:
 
         self._label_font: pygame.font.Font | None = None
 
+    def has_crossed_river(self, pos: pygame.Vector2) -> bool:
+        # Checks if an agent has crossed to the goal bank.
+        return pos.x > self.river_x2 if self.direction == 1 else pos.x < self.river_x1
+
+    def is_on_start_bank(self, pos: pygame.Vector2) -> bool:
+        # Checks if an agent is still on the start bank before the river.
+        return pos.x < self.river_x1 if self.direction == 1 else pos.x > self.river_x2
+
     def is_in_goal_pen(self, pos: pygame.Vector2, radius: float = 0.0) -> bool:
         # Checks if an agent is safely inside the goal pen.
+        if self.direction == 1:
+            in_x = pos.x >= self.goal_rect.left + radius + 10 and pos.x <= self.goal_rect.right - radius
+        else:
+            in_x = pos.x >= self.goal_rect.left + radius and pos.x <= self.goal_rect.right - radius - 10
         return (
-            pos.x >= self.goal_rect.left + radius + 10
-            and pos.x <= self.goal_rect.right - radius
+            in_x
             and pos.y >= self.goal_rect.top + radius + 10
             and pos.y <= self.goal_rect.bottom - radius - 10
         )
@@ -292,38 +333,43 @@ class PastureMap:
     def geodesic_distance_to_goal(self, pos: pygame.Vector2, radius: float = 0.0) -> float:
         """
         Continuous path distance to the goal pen along valid terrain:
-        West bank -> bridge_in -> bridge_out -> pen_approach (if vertically offset)
+        Start bank -> bridge_in -> bridge_out -> pen_approach (if vertically offset)
         -> exterior corners if N/S of pen -> gate_center -> pen_target.
         """
         if self.is_in_goal_pen(pos, radius):
             return 0.0
 
-        if pos.x < self.river_x1:
+        if self.is_on_start_bank(pos):
             return (pos - self.bridge_in).length() + self._d_bridge + self._d_east + self._d_pen
-        if pos.x <= self.river_x2:
+        if self.river_x1 <= pos.x <= self.river_x2:
             return (pos - self.bridge_out).length() + self._d_east + self._d_pen
-        if pos.x >= self.goal_rect.left - 20 and pos.y < self.goal_rect.top:
+
+        rel_gate = (pos.x - self.gate_center.x) * self.direction
+        if rel_gate >= -20.0 and pos.y < self.goal_rect.top:
             return (pos - self.pen_corner_nw).length() + self._d_corner_nw + self._d_pen
-        if pos.x >= self.goal_rect.left - 20 and pos.y > self.goal_rect.bottom:
+        if rel_gate >= -20.0 and pos.y > self.goal_rect.bottom:
             return (pos - self.pen_corner_sw).length() + self._d_corner_sw + self._d_pen
-        if pos.x < self.goal_rect.left:
-            if abs(pos.y - self.gate_center.y) > 65.0 and pos.x < self.goal_rect.left - 15:
+        if rel_gate < 0.0:
+            if abs(pos.y - self.gate_center.y) > 65.0 and rel_gate < -15.0:
                 return (pos - self.pen_approach).length() + self._d_approach + self._d_pen
             return (pos - self.gate_center).length() + self._d_pen
         return (pos - self.pen_target).length()
 
     def next_waypoint(self, pos: pygame.Vector2) -> pygame.Vector2:
         # Returns the immediate valid bottleneck, staging point, or exterior corner waypoint ahead.
-        if pos.x < self.river_x1:
+        if self.is_on_start_bank(pos):
             return self.bridge_in
-        if pos.x < self.river_x2 + 20:
-            return pygame.Vector2(self.river_x2 + 45, self.bridge_center.y)
-        if pos.x >= self.goal_rect.left - 20 and pos.y < self.goal_rect.top:
+        if (pos.x < self.river_x2 + 20) if self.direction == 1 else (pos.x > self.river_x1 - 20):
+            exit_x = (self.river_x2 + 45) if self.direction == 1 else (self.river_x1 - 45)
+            return pygame.Vector2(exit_x, self.bridge_center.y)
+
+        rel_gate = (pos.x - self.gate_center.x) * self.direction
+        if rel_gate >= -20.0 and pos.y < self.goal_rect.top:
             return self.pen_corner_nw
-        if pos.x >= self.goal_rect.left - 20 and pos.y > self.goal_rect.bottom:
+        if rel_gate >= -20.0 and pos.y > self.goal_rect.bottom:
             return self.pen_corner_sw
-        if pos.x < self.goal_rect.left + 15:
-            if abs(pos.y - self.gate_center.y) > 65.0 and pos.x < self.goal_rect.left - 15:
+        if rel_gate < 15.0:
+            if abs(pos.y - self.gate_center.y) > 65.0 and rel_gate < -15.0:
                 return self.pen_approach
             return self.gate_center
         return self.pen_target
@@ -377,6 +423,8 @@ class PastureMap:
         # Goal Pen Fences
         gx1, gx2 = self.goal_rect.left, self.goal_rect.right
         gy1, gy2 = self.goal_rect.top, self.goal_rect.bottom
+        gate_x = gx1 if self.direction == 1 else gx2
+        back_x = gx2 if self.direction == 1 else gx1
 
         if gx1 - radius < pos.x < gx2 + radius:
             if abs(pos.y - gy1) < radius:
@@ -387,14 +435,14 @@ class PastureMap:
                 vel.y = -vel.y * 0.5
 
         if gy1 - radius < pos.y < gy2 + radius:
-            if abs(pos.x - gx2) < radius:
-                pos.x = gx2 + radius if pos.x > gx2 else gx2 - radius
+            if abs(pos.x - back_x) < radius:
+                pos.x = back_x + radius if pos.x > back_x else back_x - radius
                 vel.x = -vel.x * 0.5
 
-        if abs(pos.x - gx1) < radius:
+        if abs(pos.x - gate_x) < radius:
             is_in_gate = (self.gate_y1 <= pos.y <= self.gate_y2)
             if not is_in_gate and (gy1 - radius < pos.y < gy2 + radius):
-                pos.x = gx1 - radius if pos.x < gx1 else gx1 + radius
+                pos.x = gate_x - radius if pos.x < gate_x else gate_x + radius
                 vel.x = -vel.x * 0.5
 
         return pos, vel
@@ -477,12 +525,15 @@ class PastureMap:
                     if gx1 <= x_hit <= gx2:
                         best_t, best_type = t, 1
 
+        gate_x = gx1 if self.direction == 1 else gx2
+        back_x = gx2 if self.direction == 1 else gx1
+
         if abs(dx) > 1e-6:
-            t = (gx2 - ox) / dx
+            t = (back_x - ox) / dx
             if 0.0 < t < best_t and gy1 <= oy + dy * t <= gy2:
                 best_t, best_type = t, 1
 
-            t = (gx1 - ox) / dx
+            t = (gate_x - ox) / dx
             if 0.0 < t < best_t:
                 y_hit = oy + dy * t
                 if self.gate_y1 <= y_hit <= self.gate_y2:
@@ -517,15 +568,17 @@ class PastureMap:
 
         gx1, gx2 = self.goal_rect.left, self.goal_rect.right
         gy1, gy2 = self.goal_rect.top, self.goal_rect.bottom
+        gate_x = gx1 if self.direction == 1 else gx2
+        back_x = gx2 if self.direction == 1 else gx1
 
         pygame.draw.line(surface, COLOR_GOAL_PEN, (gx1, gy1), (gx2, gy1), 4)
         pygame.draw.line(surface, COLOR_GOAL_PEN, (gx1, gy2), (gx2, gy2), 4)
-        pygame.draw.line(surface, COLOR_GOAL_PEN, (gx2, gy1), (gx2, gy2), 4)
-        pygame.draw.line(surface, COLOR_GOAL_PEN, (gx1, gy1), (gx1, self.gate_y1), 4)
-        pygame.draw.line(surface, COLOR_GOAL_PEN, (gx1, self.gate_y2), (gx1, gy2), 4)
+        pygame.draw.line(surface, COLOR_GOAL_PEN, (back_x, gy1), (back_x, gy2), 4)
+        pygame.draw.line(surface, COLOR_GOAL_PEN, (gate_x, gy1), (gate_x, self.gate_y1), 4)
+        pygame.draw.line(surface, COLOR_GOAL_PEN, (gate_x, self.gate_y2), (gate_x, gy2), 4)
 
-        pygame.draw.circle(surface, (100, 70, 40), (gx1, self.gate_y1), 6)
-        pygame.draw.circle(surface, (100, 70, 40), (gx1, self.gate_y2), 6)
+        pygame.draw.circle(surface, (100, 70, 40), (gate_x, self.gate_y1), 6)
+        pygame.draw.circle(surface, (100, 70, 40), (gate_x, self.gate_y2), 6)
 
         if self._label_font is None:
             self._label_font = pygame.font.SysFont("Helvetica, Arial, sans-serif", 14, bold=True)
@@ -549,9 +602,10 @@ class PastureMap:
         # Grass fill
         pygame.draw.rect(surface, COLOR_GRASS, rect, border_radius=6)
 
-        # Spawn hint box (West pasture)
+        # Spawn hint box (Start pasture)
+        spawn_x0 = 90 if self.direction == 1 else (SCREEN_WIDTH - 370)
         spawn_r = pygame.Rect(
-            mx(90), my(190), max(4, int(280 * sx)), max(4, int(420 * sy))
+            mx(spawn_x0), my(190), max(4, int(280 * sx)), max(4, int(420 * sy))
         )
         pygame.draw.rect(surface, (76, 164, 78), spawn_r, width=1, border_radius=3)
 
@@ -570,14 +624,16 @@ class PastureMap:
         # Goal pen zone + gate gap
         gx1_m, gx2_m = mx(self.goal_rect.left), mx(self.goal_rect.right)
         gy1_m, gy2_m = my(self.goal_rect.top), my(self.goal_rect.bottom)
+        gate_x_m = gx1_m if self.direction == 1 else gx2_m
+        back_x_m = gx2_m if self.direction == 1 else gx1_m
         gate1_m, gate2_m = my(self.gate_y1), my(self.gate_y2)
 
         pygame.draw.rect(surface, (90, 175, 100), (gx1_m, gy1_m, max(4, gx2_m - gx1_m), max(4, gy2_m - gy1_m)))
         pygame.draw.line(surface, COLOR_GOAL_PEN, (gx1_m, gy1_m), (gx2_m, gy1_m), 2)
         pygame.draw.line(surface, COLOR_GOAL_PEN, (gx1_m, gy2_m), (gx2_m, gy2_m), 2)
-        pygame.draw.line(surface, COLOR_GOAL_PEN, (gx2_m, gy1_m), (gx2_m, gy2_m), 2)
-        pygame.draw.line(surface, COLOR_GOAL_PEN, (gx1_m, gy1_m), (gx1_m, gate1_m), 2)
-        pygame.draw.line(surface, COLOR_GOAL_PEN, (gx1_m, gate2_m), (gx1_m, gy2_m), 2)
+        pygame.draw.line(surface, COLOR_GOAL_PEN, (back_x_m, gy1_m), (back_x_m, gy2_m), 2)
+        pygame.draw.line(surface, COLOR_GOAL_PEN, (gate_x_m, gy1_m), (gate_x_m, gate1_m), 2)
+        pygame.draw.line(surface, COLOR_GOAL_PEN, (gate_x_m, gate2_m), (gate_x_m, gy2_m), 2)
 
         # Boulders
         scale_r = min(sx, sy)
