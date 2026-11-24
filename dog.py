@@ -105,12 +105,14 @@ class HerdingDog:
                 wp_focus = pasture_map.next_waypoint(focus)
                 fw = wp_focus - focus
                 fw_len = fw.length()
-                push_dx, push_dy = (fw.x / fw_len, fw.y / fw_len) if fw_len > 0.001 else (1.0, 0.0)
+                push_dx, push_dy = (
+                    (fw.x / fw_len, fw.y / fw_len) if fw_len > 0.001 else (float(pasture_map.direction), 0.0)
+                )
             else:
                 centroid = None
                 straggler = None
                 focus = None
-                push_dx, push_dy = 1.0, 0.0
+                push_dx, push_dy = float(pasture_map.direction), 0.0
 
             def to_push(vx: float, vy: float) -> tuple[float, float]:
                 return (vx * push_dx + vy * push_dy, -vx * push_dy + vy * push_dx)
@@ -226,10 +228,12 @@ class HerdingDog:
                 wp_herd = pasture_map.next_waypoint(centroid)
                 to_wp = wp_herd - self.pos
                 wp_dist = to_wp.length()
-                wp_dx, wp_dy = (to_wp.x / wp_dist, to_wp.y / wp_dist) if wp_dist > 0.001 else (1.0, 0.0)
+                wp_dx, wp_dy = (
+                    (to_wp.x / wp_dist, to_wp.y / wp_dist) if wp_dist > 0.001 else (float(pasture_map.direction), 0.0)
+                )
                 wp_fwd, wp_lat = to_push(wp_dx, wp_dy)
                 smell_tokens.append(
-                    [max(0.0, 1.0 - wp_dist / SMELL_RANGE), wp_fwd, wp_lat, 1.0 if centroid.x > pasture_map.river_x2 else 0.0]
+                    [max(0.0, 1.0 - wp_dist / SMELL_RANGE), wp_fwd, wp_lat, 1.0 if pasture_map.has_crossed_river(centroid) else 0.0]
                 )
 
                 self.last_smell_vectors.append((self.pos, centroid))
@@ -246,7 +250,9 @@ class HerdingDog:
             self_wp = pasture_map.next_waypoint(self.pos)
             to_self_wp = self_wp - self.pos
             sw_dist = to_self_wp.length()
-            self_wp_dx, self_wp_dy = (to_self_wp.x / sw_dist, to_self_wp.y / sw_dist) if sw_dist > 0.001 else (1.0, 0.0)
+            self_wp_dx, self_wp_dy = (
+                (to_self_wp.x / sw_dist, to_self_wp.y / sw_dist) if sw_dist > 0.001 else (float(pasture_map.direction), 0.0)
+            )
             sw_fwd, sw_lat = to_push(self_wp_dx, self_wp_dy)
 
             unpenned_ratio = len(unpenned) / max(1, len(herd))
