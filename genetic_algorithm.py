@@ -9,6 +9,7 @@ import numpy as np
 import torch
 import pygame
 from config import (
+    SCREEN_WIDTH,
     SCREEN_HEIGHT,
     GA_POPULATION_SIZE,
     GA_SIMULATION_STEPS,
@@ -32,7 +33,7 @@ from sheep import Sheep
 
 
 def _init_worker():
-    """Prevent PyTorch OpenMP thread contention across parallel worker processes."""
+    #Prevent PyTorch OpenMP thread contention across parallel worker processes.
     os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
     torch.set_num_threads(1)
 
@@ -44,7 +45,7 @@ def _place_clear_of_rocks(
     map_env: PastureMap,
     bounds: tuple[float, float, float, float] | None = None,
 ) -> pygame.Vector2:
-    """Nudges a spawn point outside any overlapping rock obstacle and keeps it within valid bounds."""
+    #Nudges a spawn point outside any overlapping rock obstacle and keeps it within valid bounds.
     pos = pygame.Vector2(x, y)
     for _ in range(2):
         for rock in map_env.rocks:
@@ -69,57 +70,64 @@ def spawn_scenario(
     """
     Spawns a herd and returns `(herd, (dog_x, dog_y, dog_facing_angle))`
     adapted dynamically to `map_env`'s river, bridge, and goal-pen geometry:
-      - "east":        East pasture between bridge and gate (Stage 1 herding & penning drill)
-      - "bridge":      West bank approaching bridge (Stage 1 bridge funnel drill)
-      - "full_center": West pasture center
-      - "full_north":  North-West pasture
-      - "full_south":  South-West pasture
-      - "full":        Randomized West pasture spawn for evaluation / play
+      - "east":        Goal-bank pasture between bridge and gate (Stage 1 herding & penning drill)
+      - "bridge":      Start bank approaching bridge (Stage 1 bridge funnel drill)
+      - "full_center": Start pasture center
+      - "full_north":  North start pasture
+      - "full_south":  South start pasture
+      - "full":        Randomized start pasture spawn for evaluation / play
     """
     rng = random.Random(seed)
     zone_x, _, _, _ = START_ZONE_RECT
 
+    is_rtl = (map_env.direction == -1)
+    ltr_rx1 = float(SCREEN_WIDTH - map_env.river_x2) if is_rtl else float(map_env.river_x1)
+    ltr_rx2 = float(SCREEN_WIDTH - map_env.river_x1) if is_rtl else float(map_env.river_x2)
+    ltr_goal_left = float(SCREEN_WIDTH - map_env.goal_rect.right) if is_rtl else float(map_env.goal_rect.left)
+    ltr_gate_center = pygame.Vector2(ltr_goal_left, map_env.gate_center.y)
+    ltr_bridge_in = pygame.Vector2(ltr_rx1, map_env.bridge_center.y)
+
     dog_bounds_override: tuple[float, float, float, float] | None = None
 
     if scenario_mode == "east":
-        east_span = max(140.0, float(map_env.goal_rect.left - map_env.river_x2))
-        min_x = float(map_env.river_x2 + 28)
-        max_x = float(map_env.goal_rect.left - 32)
+        east_span = max(140.0, ltr_goal_left - ltr_rx2)
+        min_x = ltr_rx2 + 28.0
+        max_x = ltr_goal_left - 32.0
         min_y, max_y = 90.0, float(SCREEN_HEIGHT - 90)
         spawn_r = 65.0
 
         if rng.random() < 0.65:
             # Post-bridge exit drill: practice flanking turns right after crossing a shifted bridge
-            cx = min(max_x - 75.0, float(map_env.river_x2) + rng.uniform(55.0, 105.0))
+            cx = min(max_x - 75.0, ltr_rx2 + rng.uniform(55.0, 105.0))
             cy = max(115.0, min(float(SCREEN_HEIGHT - 115), float(map_env.bridge_center.y) + rng.uniform(-45.0, 45.0)))
-            dog_x = max(float(map_env.river_x1 + 10), float(map_env.river_x2) - rng.uniform(0.0, 25.0))
+            dog_x = max(ltr_rx1 + 10.0, ltr_rx2 - rng.uniform(0.0, 25.0))
             dog_y = max(75.0, min(float(SCREEN_HEIGHT - 75), float(map_env.bridge_center.y) + rng.uniform(-25.0, 25.0)))
             dog_bounds_override = (
-                float(map_env.river_x1 + 5),
+                ltr_rx1 + 5.0,
                 max_x,
                 max(float(map_env.bridge_y1 + DOG_RADIUS + 4), 65.0),
                 min(float(map_env.bridge_y2 - DOG_RADIUS - 4), float(SCREEN_HEIGHT - 65)),
             )
         else:
-            cx = rng.uniform(map_env.river_x2 + 0.30 * east_span, map_env.river_x2 + 0.58 * east_span)
-            cy = max(125.0, min(float(SCREEN_HEIGHT - 125), float(map_env.gate_center.y) + rng.uniform(-140.0, 140.0)))
-            to_gate = map_env.gate_center - pygame.Vector2(cx, cy)
+            cx = rng.uniform(ltr_rx2 + 0.30 * east_span, ltr_rx2 + 0.58 * east_span)
+            cy = max(125.0, min(float(SCREEN_HEIGHT - 125), float(ltr_gate_center.y) + rng.uniform(-140.0, 140.0)))
+            to_gate = ltr_gate_center - pygame.Vector2(cx, cy)
             push_dir = to_gate.normalize() if to_gate.length_squared() > 1.0 else pygame.Vector2(1.0, 0.0)
             dog_dist = rng.uniform(95.0, 125.0)
             dog_x = max(min_x, min(max_x - 20.0, cx - push_dir.x * dog_dist))
             dog_y = max(75.0, min(float(SCREEN_HEIGHT - 75), cy - push_dir.y * dog_dist + rng.uniform(-25.0, 25.0)))
 
     elif scenario_mode == "bridge":
-        west_edge = max(float(zone_x + 40), float(map_env.river_x1 - 190))
-        cx = rng.uniform(west_edge, float(map_env.river_x1 - 105))
+        west_edge = max(float(zone_x + 40), ltr_rx1 - 190.0)
+        cx = rng.uniform(west_edge, ltr_rx1 - 105.0)
         cy = max(130.0, min(float(SCREEN_HEIGHT - 130), float(map_env.bridge_center.y) + rng.uniform(-120.0, 120.0)))
         spawn_r = 65.0
 
         min_x = float(zone_x)
-        max_x = float(map_env.river_x1 - 30)
+        max_x = ltr_rx1 - 30.0
         min_y, max_y = 100.0, float(SCREEN_HEIGHT - 100)
 
-        to_bridge = map_env.bridge_in - pygame.Vector2(cx, cy)
+        to_bridge = ltr_bridge_in - pygame.Vector2(cx, cy)
         push_dir = to_bridge.normalize() if to_bridge.length_squared() > 1.0 else pygame.Vector2(1.0, 0.0)
         dog_dist = rng.uniform(110.0, 145.0)
         dog_x = max(60.0, min(max_x - 30.0, cx - push_dir.x * dog_dist))
@@ -129,42 +137,41 @@ def spawn_scenario(
         cx, cy = 260.0, 270.0
         spawn_r = 75.0
         dog_x, dog_y = 110.0, 240.0
-        min_x, max_x = float(zone_x + 20), float(map_env.river_x1 - 40)
+        min_x, max_x = float(zone_x + 20), ltr_rx1 - 40.0
         min_y, max_y = 120.0, 680.0
 
     elif scenario_mode == "full_south":
         cx, cy = 260.0, 530.0
         spawn_r = 75.0
         dog_x, dog_y = 110.0, 560.0
-        min_x, max_x = float(zone_x + 20), float(map_env.river_x1 - 40)
+        min_x, max_x = float(zone_x + 20), ltr_rx1 - 40.0
         min_y, max_y = 120.0, 680.0
 
     elif scenario_mode == "full_center":
         cx, cy = 250.0, 400.0
         spawn_r = 85.0
         dog_x, dog_y = float(DOG_START_POS[0]), float(DOG_START_POS[1])
-        min_x, max_x = float(zone_x + 20), float(map_env.river_x1 - 40)
+        min_x, max_x = float(zone_x + 20), ltr_rx1 - 40.0
         min_y, max_y = 120.0, 680.0
 
     else:  # "full" randomized
-        west_limit = max(260.0, float(map_env.river_x1 - 220))
+        west_limit = max(260.0, ltr_rx1 - 220.0)
         cx = rng.uniform(200.0, west_limit)
         cy = rng.uniform(160.0, float(SCREEN_HEIGHT - 160))
         spawn_r = 80.0
         dog_x = max(55.0, cx - rng.uniform(110.0, 150.0))
         dog_y = max(100.0, min(float(SCREEN_HEIGHT - 100), cy + rng.uniform(-55.0, 55.0)))
-        min_x, max_x = float(zone_x), float(map_env.river_x1 - 40)
+        min_x, max_x = float(zone_x), ltr_rx1 - 40.0
         min_y, max_y = 95.0, float(SCREEN_HEIGHT - 95)
 
     bounds = (min_x, max_x, min_y, max_y)
-    herd: list[Sheep] = []
+    raw_coords: list[tuple[float, float]] = []
     for _ in range(count):
         ang = rng.uniform(0, 2 * math.pi)
         r = rng.uniform(8, spawn_r)
         sx = max(min_x, min(max_x, cx + math.cos(ang) * r))
         sy = max(min_y, min(max_y, cy + math.sin(ang) * r))
-        clear_pos = _place_clear_of_rocks(sx, sy, SHEEP_RADIUS, map_env, bounds=bounds)
-        herd.append(Sheep(clear_pos.x, clear_pos.y))
+        raw_coords.append((sx, sy))
 
     dog_bounds = dog_bounds_override if dog_bounds_override is not None else (
         max(45.0, min_x - 45.0),
@@ -172,13 +179,31 @@ def spawn_scenario(
         65.0,
         float(SCREEN_HEIGHT - 65),
     )
+
+    if is_rtl:
+        cx = float(SCREEN_WIDTH) - cx
+        dog_x = float(SCREEN_WIDTH) - dog_x
+        bounds = (float(SCREEN_WIDTH) - bounds[1], float(SCREEN_WIDTH) - bounds[0], bounds[2], bounds[3])
+        dog_bounds = (
+            float(SCREEN_WIDTH) - dog_bounds[1],
+            float(SCREEN_WIDTH) - dog_bounds[0],
+            dog_bounds[2],
+            dog_bounds[3],
+        )
+        raw_coords = [(float(SCREEN_WIDTH) - sx, sy) for sx, sy in raw_coords]
+
+    herd: list[Sheep] = []
+    for sx, sy in raw_coords:
+        clear_pos = _place_clear_of_rocks(sx, sy, SHEEP_RADIUS, map_env, bounds=bounds)
+        herd.append(Sheep(clear_pos.x, clear_pos.y))
+
     dog_clear = _place_clear_of_rocks(dog_x, dog_y, DOG_RADIUS, map_env, bounds=dog_bounds)
     dog_angle = math.atan2(cy - dog_clear.y, cx - dog_clear.x)
     return herd, (dog_clear.x, dog_clear.y, dog_angle)
 
 
 def spawn_training_herd(count: int, map_env: PastureMap, seed: int | None = None) -> list[Sheep]:
-    """Spawns sheep grouped in the Western pasture (convenience wrapper)."""
+    #Spawns sheep grouped in the Western pasture (convenience wrapper).
     herd, _ = spawn_scenario(count, map_env, seed=seed, scenario_mode="full")
     return herd
 
@@ -192,9 +217,8 @@ def evaluate_episode(
     env_spec: str = "classic",
     env_seed: int | None = None,
 ) -> dict[str, float | int]:
-    """
-    Runs one headless episode on `env_spec` and computes geodesic + herding-stance fitness and telemetry.
-    """
+    #Runs one headless episode on `env_spec` and computes geodesic + herding-stance fitness and telemetry.
+
     random.seed(eval_seed)
     np.random.seed(eval_seed)
 
@@ -240,7 +264,7 @@ def evaluate_episode(
         for s in herd:
             s.update_brain(herd, HERD_MAX_DISTANCE, dog, flock_center, pasture_map)
             s.update_physics(pasture_map)
-            if time_to_first_cross == -1 and s.pos.x > pasture_map.river_x2:
+            if time_to_first_cross == -1 and pasture_map.has_crossed_river(s.pos):
                 time_to_first_cross = step
             if time_to_first_pen == -1 and s.in_goal_pen:
                 time_to_first_pen = step
@@ -267,7 +291,7 @@ def evaluate_episode(
     final_max_g = max(final_g) if final_g else 0.0
 
     sheep_in_pen = sum(1 for s in herd if pasture_map.is_in_goal_pen(s.pos, s.radius))
-    sheep_past_bridge = sum(1 for s in herd if s.pos.x > pasture_map.river_x2)
+    sheep_past_bridge = sum(1 for s in herd if pasture_map.has_crossed_river(s.pos))
 
     mean_progress = (init_mean_g - final_mean_g) / max(1.0, init_mean_g)
     worst_progress = (init_max_g - final_max_g) / max(1.0, init_max_g)
@@ -405,7 +429,7 @@ class GeneticTrainer:
             self._pool = multiprocessing.Pool(self.num_workers, initializer=_init_worker)
 
     def close(self):
-        """Closes persistent worker pool cleanly."""
+        #Closes persistent worker pool cleanly.
         if self._pool is not None:
             self._pool.close()
             self._pool.join()
@@ -453,7 +477,7 @@ class GeneticTrainer:
         ]
 
     def _validate_full_map(self, genome: np.ndarray, steps_per_eval: int) -> dict[str, float | int]:
-        """Evaluates a candidate on a fixed multi-map or single-map validation suite."""
+        #Evaluates a candidate on a fixed multi-map or single-map validation suite.
         if self.env_mode == "multi":
             val_episodes = [
                 ("full", steps_per_eval, 60001, "classic", 60001),
@@ -484,7 +508,7 @@ class GeneticTrainer:
     def step_generation(
         self, steps_per_eval: int = GA_SIMULATION_STEPS, fixed_seed: int | None = None
     ) -> dict:
-        """Runs one Evolution Strategy generation (curriculum + antithetic perturbations + Adam)."""
+        #Runs one Evolution Strategy generation (curriculum + antithetic perturbations + Adam).
         self.generation += 1
         progress = min(1.0, (self.generation - 1) / max(1, self.total_generations - 1))
         sigma = ES_SIGMA_START + (ES_SIGMA_END - ES_SIGMA_START) * progress
