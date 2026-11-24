@@ -167,7 +167,7 @@ class SheepBrain:
             sheep.herd_urgency = 0.0
 
             # Gentle inward nudge past the gate so arriving sheep settle deeper inside the pen
-            if pasture_map is not None and sx < pasture_map.goal_rect.left + 55:
+            if pasture_map is not None and (sx - pasture_map.gate_center.x) * pasture_map.direction < 55:
                 to_pen = pasture_map.pen_target - sheep.pos
                 if to_pen.length_squared() > 0.001:
                     steering += to_pen.normalize() * 0.55
@@ -255,13 +255,22 @@ class SheepBrain:
                         steering.y += 0.75 * (1.0 - (sheep.pos.y - gy2) / fence_buf)
 
                 if gy1 - fence_buf < sheep.pos.y < gy2 + fence_buf:
-                    if gx2 < sheep.pos.x < gx2 + fence_buf:
-                        steering.x += 0.75 * (1.0 - (sheep.pos.x - gx2) / fence_buf)
-                    if gx1 - fence_buf < sheep.pos.x < gx1 and not (pasture_map.gate_y1 <= sheep.pos.y <= pasture_map.gate_y2):
-                        push = 0.75 * (1.0 - (gx1 - sheep.pos.x) / fence_buf)
-                        steering.x -= push * 0.6
-                        # Funnel vertically toward the gate center
-                        steering.y += (0.5 if pasture_map.gate_center.y > sheep.pos.y else -0.5) * push
+                    if pasture_map.direction == 1:
+                        if gx2 < sheep.pos.x < gx2 + fence_buf:
+                            steering.x += 0.75 * (1.0 - (sheep.pos.x - gx2) / fence_buf)
+                        if gx1 - fence_buf < sheep.pos.x < gx1 and not (pasture_map.gate_y1 <= sheep.pos.y <= pasture_map.gate_y2):
+                            push = 0.75 * (1.0 - (gx1 - sheep.pos.x) / fence_buf)
+                            steering.x -= push * 0.6
+                            # Funnel vertically toward the gate center
+                            steering.y += (0.5 if pasture_map.gate_center.y > sheep.pos.y else -0.5) * push
+                    else:
+                        if gx1 - fence_buf < sheep.pos.x < gx1:
+                            steering.x -= 0.75 * (1.0 - (gx1 - sheep.pos.x) / fence_buf)
+                        if gx2 < sheep.pos.x < gx2 + fence_buf and not (pasture_map.gate_y1 <= sheep.pos.y <= pasture_map.gate_y2):
+                            push = 0.75 * (1.0 - (sheep.pos.x - gx2) / fence_buf)
+                            steering.x += push * 0.6
+                            # Funnel vertically toward the gate center
+                            steering.y += (0.5 if pasture_map.gate_center.y > sheep.pos.y else -0.5) * push
 
         # ---------------------------------------------------------
         # 6. SATISFIED STATE & SPEED SCALING
