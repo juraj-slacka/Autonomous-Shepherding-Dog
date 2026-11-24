@@ -35,7 +35,7 @@ from config import (
     GA_MAX_GENERATIONS,
     GA_SIMULATION_STEPS,
 )
-from map_env import SELECTABLE_ENV_IDS, create_map, resolve_env_id
+from map_env import SELECTABLE_ENV_IDS, RTL_ENV_IDS, create_map, resolve_env_id
 from transformer_brain import HerdingTransformerBrain
 from dog import HerdingDog
 from sheep import Sheep
@@ -202,6 +202,12 @@ def run_simulation_mode(args):
                     load_environment(SELECTABLE_ENV_IDS[1])
                 elif event.key == pygame.K_3:
                     load_environment(SELECTABLE_ENV_IDS[2])
+                elif event.key == pygame.K_4:
+                    load_environment(RTL_ENV_IDS[0])
+                elif event.key == pygame.K_5:
+                    load_environment(RTL_ENV_IDS[1])
+                elif event.key == pygame.K_6:
+                    load_environment(RTL_ENV_IDS[2])
                 elif event.key == pygame.K_SPACE:
                     is_paused = not is_paused
                 elif event.key == pygame.K_s:
@@ -275,17 +281,18 @@ def run_simulation_mode(args):
         for sheep in herd:
             if pasture_map.is_in_goal_pen(sheep.pos, sheep.radius):
                 penned_count += 1
-            if sheep.pos.x > pasture_map.river_x2:
+            if pasture_map.has_crossed_river(sheep.pos):
                 past_bridge_count += 1
             sheep.draw(screen, show_debug=show_debug, herd_max_dist=HERD_MAX_DISTANCE)
 
         dog.draw(screen, show_senses=show_senses, show_debug=show_debug)
 
-        env_tag = (
-            f"[{SELECTABLE_ENV_IDS.index(pasture_map.env_id) + 1}] {pasture_map.name}"
-            if pasture_map.env_id in SELECTABLE_ENV_IDS
-            else pasture_map.name
-        )
+        if pasture_map.env_id in SELECTABLE_ENV_IDS:
+            env_tag = f"[{SELECTABLE_ENV_IDS.index(pasture_map.env_id) + 1}] {pasture_map.name}"
+        elif pasture_map.env_id in RTL_ENV_IDS:
+            env_tag = f"[{RTL_ENV_IDS.index(pasture_map.env_id) + 4}] {pasture_map.name}"
+        else:
+            env_tag = pasture_map.name
         hud_top = (
             f"FPS: {int(clock.get_fps())} | Corralled: {penned_count}/{len(herd)} | "
             f"Bridge: {past_bridge_count}/{len(herd)} | Env: {env_tag}"
@@ -306,7 +313,7 @@ def run_simulation_mode(args):
         draw_shadowed_text(screen, senses_str, small_font, 16, 56, color=(240, 240, 180))
 
         controls_text = (
-            "Controls: [1/2/3] Switch Map | [Space] Pause | "
+            "Controls: [1-3] L->R | [4-6] R->L | [Space] Pause | "
             "[S] Senses | [D] Debug | [R] Respawn | [Q] Quit"
         )
         draw_shadowed_text(screen, controls_text, small_font, 16, SCREEN_HEIGHT - 24)
@@ -342,10 +349,16 @@ def main():
         "--env",
         type=str,
         default=None,
-        choices=["1", "2", "3", "classic", "north_south", "south_north", "random", "multi"],
+        choices=[
+            "1", "2", "3", "4", "5", "6", "1r", "2r", "3r",
+            "classic", "north_south", "south_north",
+            "classic_rtl", "north_south_rtl", "south_north_rtl",
+            "random", "multi",
+        ],
         help=(
-            "Environment selection: 1/classic, 2/north_south, 3/south_north, random (procedural variant), "
-            "or multi (domain randomization for training; defaults to 1/classic in play mode)"
+            "Environment selection: 1-3/classic,north_south,south_north (L->R), "
+            "4-6/1r-3r/classic_rtl,north_south_rtl,south_north_rtl (R->L), "
+            "random (procedural variant), or multi (domain randomization for training; defaults to 1/classic in play mode)"
         ),
     )
     parser.add_argument(
